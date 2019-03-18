@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	o_m "github.com/cevaris/ordered_map"
-	"github.com/graphql-go/graphql/gqlerrors"
-	"github.com/graphql-go/graphql/language/ast"
+	"github.com/edinpeter/graphql/gqlerrors"
+	"github.com/edinpeter/graphql/language/ast"
 )
 
 type ExecuteParams struct {
