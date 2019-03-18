@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 
+	o_m "github.com/cevaris/ordered_map"
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/ast"
 )
@@ -223,28 +224,31 @@ type executeFieldsParams struct {
 	ExecutionContext *executionContext
 	ParentType       *Object
 	Source           interface{}
-	Fields           map[string][]*ast.Field
+	Fields           *o_m.OrderedMap
 	Path             *ResponsePath
 }
 
 // Implements the "Evaluating selection sets" section of the spec for "write" mode.
 func executeFieldsSerially(p executeFieldsParams) *Result {
 	if p.Source == nil {
-		p.Source = map[string]interface{}{}
+		p.Source = o_m.NewOrderedMap()
 	}
 	if p.Fields == nil {
-		p.Fields = map[string][]*ast.Field{}
+		p.Fields = o_m.NewOrderedMap()
 	}
 
-	finalResults := make(map[string]interface{}, len(p.Fields))
-	for responseName, fieldASTs := range p.Fields {
-		fieldPath := p.Path.WithKey(responseName)
-		resolved, state := resolveField(p.ExecutionContext, p.ParentType, p.Source, fieldASTs, fieldPath)
+	finalResults := make(map[string]interface{}, p.Fields.Len())
+
+	iter := p.Fields.IterFunc()
+	for kv, ok := iter(); ok; kv, ok = iter() {
+	    fieldPath := p.Path.WithKey(kv.Key)
+		resolved, state := resolveField(p.ExecutionContext, p.ParentType, p.Source, kv.Value.([]*ast.Field), fieldPath)
 		if state.hasNoFieldDefs {
 			continue
 		}
-		finalResults[responseName] = resolved
+		finalResults[kv.Key.(string)] = resolved
 	}
+
 	dethunkMapDepthFirst(finalResults)
 
 	return &Result{
@@ -270,17 +274,19 @@ func executeSubFields(p executeFieldsParams) map[string]interface{} {
 		p.Source = map[string]interface{}{}
 	}
 	if p.Fields == nil {
-		p.Fields = map[string][]*ast.Field{}
+		p.Fields = o_m.NewOrderedMap()
 	}
 
-	finalResults := make(map[string]interface{}, len(p.Fields))
-	for responseName, fieldASTs := range p.Fields {
-		fieldPath := p.Path.WithKey(responseName)
-		resolved, state := resolveField(p.ExecutionContext, p.ParentType, p.Source, fieldASTs, fieldPath)
+	finalResults := make(map[string]interface{}, p.Fields.Len())
+
+	iter := p.Fields.IterFunc()
+	for kv, ok := iter(); ok; kv, ok = iter() {
+	    fieldPath := p.Path.WithKey(kv.Key)
+		resolved, state := resolveField(p.ExecutionContext, p.ParentType, p.Source, kv.Value.([]*ast.Field), fieldPath)
 		if state.hasNoFieldDefs {
 			continue
 		}
-		finalResults[responseName] = resolved
+		finalResults[kv.Key.(string)] = resolved
 	}
 
 	return finalResults
@@ -378,7 +384,7 @@ type collectFieldsParams struct {
 	ExeContext           *executionContext
 	RuntimeType          *Object // previously known as OperationType
 	SelectionSet         *ast.SelectionSet
-	Fields               map[string][]*ast.Field
+	Fields               *o_m.OrderedMap
 	VisitedFragmentNames map[string]bool
 }
 
@@ -387,14 +393,14 @@ type collectFieldsParams struct {
 // CollectFields requires the "runtime type" of an object. For a field which
 // returns and Interface or Union type, the "runtime type" will be the actual
 // Object type returned by that field.
-func collectFields(p collectFieldsParams) (fields map[string][]*ast.Field) {
+func collectFields(p collectFieldsParams) (fields *o_m.OrderedMap) {
 	// overlying SelectionSet & Fields to fields
 	if p.SelectionSet == nil {
 		return p.Fields
 	}
 	fields = p.Fields
 	if fields == nil {
-		fields = map[string][]*ast.Field{}
+		fields = o_m.NewOrderedMap()
 	}
 	if p.VisitedFragmentNames == nil {
 		p.VisitedFragmentNames = map[string]bool{}
@@ -406,10 +412,11 @@ func collectFields(p collectFieldsParams) (fields map[string][]*ast.Field) {
 				continue
 			}
 			name := getFieldEntryKey(selection)
-			if _, ok := fields[name]; !ok {
-				fields[name] = []*ast.Field{}
+			if _, ok := fields.Get(name); !ok {
+				fields.Set(name, []*ast.Field{})
 			}
-			fields[name] = append(fields[name], selection)
+			astFields, _ := fields.Get(name)
+			fields.Set(name, append(astFields.([]*ast.Field), selection))
 		case *ast.InlineFragment:
 
 			if !shouldIncludeNode(p.ExeContext, selection.Directives) ||
@@ -808,7 +815,7 @@ func completeObjectValue(eCtx *executionContext, returnType *Object, fieldASTs [
 	}
 
 	// Collect sub-fields to execute to complete this value.
-	subFieldASTs := map[string][]*ast.Field{}
+	subFieldASTs := o_m.NewOrderedMap()
 	visitedFragmentNames := map[string]bool{}
 	for _, fieldAST := range fieldASTs {
 		if fieldAST == nil {
